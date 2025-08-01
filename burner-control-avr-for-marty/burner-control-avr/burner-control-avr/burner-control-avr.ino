@@ -6,7 +6,6 @@
  * 
  * All inputs and outputs are simulated via the serial console.
  */
-
 // States for the main state machine
 enum states {
   STOPPED,
@@ -17,10 +16,8 @@ enum states {
   RUNNING,
   FAULT
 };
-
 // Current state of the system
 enum states current_state = STOPPED;
-
 // State names for display
 const char* state_strings[] = {
   "STOPPED",
@@ -31,7 +28,6 @@ const char* state_strings[] = {
   "RUNNING",
   "FAULT"
 };
-
 // Input states
 bool MSTART = false;  // Momentary Start Switch
 bool MSTOP = false;   // Momentary Stop Switch
@@ -39,7 +35,6 @@ bool PCFS = false;    // Primary Combustion Flame Sensor
 bool SCFS = false;    // Secondary Combustion Flame Sensor
 int LTS = 0;          // Load Temperature Sensor (value in degrees)
 int FTS = 0;          // Flame Temperature Sensor (value in degrees)
-
 // Output states
 bool BLOW = false;    // Combustion Blower Power
 bool SHAFT = false;   // Main Shaft Power
@@ -52,7 +47,6 @@ bool FUEL3 = false;   // Main Fuel 3
 bool H2O = false;     // Cleaning Steam/Water Supply
 bool IFFI = false;    // Ignition Failure Fault Indicator
 bool SCFI = false;    // Secondary Combustion Fault Indicator
-
 // Timer variables (all in milliseconds)
 unsigned long PADT = 5000;    // Purge Air Delay Timer
 unsigned long HSOT = 3000;    // Hot Surface Ignitor Warm Up Timer
@@ -60,25 +54,47 @@ unsigned long PHDT = 2000;    // Pre Heat Delay Timer
 unsigned long MFDT = 4000;    // Main Fuel Turn On Delay Timer
 unsigned long PCST = 5000;    // Primary Combustion Safety Timer
 unsigned long SCST = 5000;    // Secondary Combustion Safety Timer
-
 // Counter variables
 int PCFC = 0;    // Primary Combustion Flame Sensor Count
 int SCFC = 0;    // Secondary Combustion Flame Sensor Count
-
 // Timer tracking variables
 unsigned long timer_start = 0;
 unsigned long current_time = 0;
 bool timer_running = false;
 unsigned long timer_duration = 0;
-
 // Serial communication
 char serial_buffer[150];
 String serial_input = "";
 bool serial_complete = false;
-
+// ---------- HARDWARE PIN ASSIGNMENTS ----------
+const uint8_t PIN_MSTART = 2;   // push-button to GND
+const uint8_t PIN_MSTOP  = 3;   // push-button to GND
+const uint8_t PIN_PCFS   = 4;   // toggle switch to GND
+const uint8_t PIN_SCFS   = 5;   // toggle switch to GND
+const uint8_t PIN_LTS    = A0;  // 10 k pot 5 V-wiper-GND
+const uint8_t PIN_FTS    = A1;  // 10 k pot 5 V-wiper-GND
+const uint8_t PIN_BLOW   = 8;   // LED/relay
+const uint8_t PIN_SHAFT  = 9;
+const uint8_t PIN_IGNITE = 10;
+const uint8_t PIN_LOGAS  = 11;
+const uint8_t PIN_FUEL1  = 12;
+const uint8_t PIN_HIGAS  = 13;  // on-board LED
 void setup() {
   // Initialize serial communication
   Serial.begin(9600);
+   // ------------ INPUTS ------------
+  pinMode(PIN_MSTART, INPUT_PULLUP);
+  pinMode(PIN_MSTOP , INPUT_PULLUP);
+  pinMode(PIN_PCFS  , INPUT_PULLUP);
+  pinMode(PIN_SCFS  , INPUT_PULLUP);
+  // Analog pins (A0/A1) need no pinMode()
+  // ------------ OUTPUTS -----------
+  pinMode(PIN_BLOW  , OUTPUT);
+  pinMode(PIN_SHAFT , OUTPUT);
+  pinMode(PIN_IGNITE, OUTPUT);
+  pinMode(PIN_LOGAS , OUTPUT);
+  pinMode(PIN_FUEL1 , OUTPUT);
+  pinMode(PIN_HIGAS , OUTPUT);
   
   // Print header and instructions
   Serial.println(F("Burner Control System Simulation"));
@@ -93,8 +109,14 @@ void setup() {
   Serial.println(F("  status - Show current system status"));
   Serial.println(F("--------------------------------"));
 }
-
 void loop() {
+  // ---- Real-world inputs ----
+  MSTART = (digitalRead(PIN_MSTART) == LOW);   // buttons active LOW
+  MSTOP  = (digitalRead(PIN_MSTOP ) == LOW);
+  PCFS   = (digitalRead(PIN_PCFS ) == LOW);
+  SCFS   = (digitalRead(PIN_SCFS ) == LOW);
+  LTS = analogRead(PIN_LTS);   // 0-1023 scale for now
+  FTS = analogRead(PIN_FTS);
   // Read serial input
   readSerialInput();
   
@@ -107,6 +129,13 @@ void loop() {
   
   // Run state machine before resetting momentary buttons
   runStateMachine();
+  // ---- Drive LEDs / relays ----
+  digitalWrite(PIN_BLOW  , BLOW);
+  digitalWrite(PIN_SHAFT , SHAFT);
+  digitalWrite(PIN_IGNITE, IGNITE);
+  digitalWrite(PIN_LOGAS , LOGAS);
+  digitalWrite(PIN_FUEL1 , FUEL1);
+  digitalWrite(PIN_HIGAS , HIGAS);
   
   // Update timers and reset momentary buttons
   updateTimers();
@@ -118,19 +147,17 @@ void loop() {
     last_status = millis();
   }
 }
-
 // Read and process serial input
 void readSerialInput() {
   while (Serial.available()) {
     char inChar = (char)Serial.read();
-    if (inChar == '\n') {
+    if (inChar == '') {
       serial_complete = true;
     } else {
       serial_input += inChar;
     }
   }
 }
-
 // Process commands from serial input
 void processCommand() {
   serial_input.trim();
@@ -177,14 +204,12 @@ void processCommand() {
     Serial.println(serial_input);
   }
 }
-
 // Start a timer with specified duration
 void startTimer(unsigned long duration) {
   timer_start = millis();
   timer_duration = duration;
   timer_running = true;
 }
-
 // Check if timer has expired
 bool isTimerExpired() {
   if (!timer_running) {
@@ -199,19 +224,16 @@ bool isTimerExpired() {
   
   return false;
 }
-
 // Update timers and handle button presses
 void updateTimers() {
-  // Reset momentary buttons after one cycle
-  if (MSTART) {
-    MSTART = false;
-  }
-  
-  if (MSTOP) {
-    MSTOP = false;
-  }
+   // ----- legacy serial-only momentary buttons -----
+  // Keep this section *only* if you still want typed "start" / "stop"
+  // to behave like a quick tap.
+  /*
+  if (MSTART) MSTART = false;
+  if (MSTOP ) MSTOP  = false;
+  */
 }
-
 // Display current system status
 void displayStatus() {
   sprintf(
@@ -237,14 +259,13 @@ void displayStatus() {
     Serial.println(F(" seconds remaining"));
   }
 }
-
 // Display detailed system status
 void displayDetailedStatus() {
-  Serial.println(F("\n--- SYSTEM STATUS ---"));
+  Serial.println(F("--- SYSTEM STATUS ---"));
   Serial.print(F("Current State: "));
   Serial.println(state_strings[current_state]);
   
-  Serial.println(F("\nINPUTS:"));
+  Serial.println(F("INPUTS:"));
   Serial.print(F("MSTART (Momentary Start Switch): "));
   Serial.println(MSTART ? "ON" : "OFF");
   Serial.print(F("MSTOP (Momentary Stop Switch): "));
@@ -258,7 +279,7 @@ void displayDetailedStatus() {
   Serial.print(F("FTS (Flame Temperature Sensor): "));
   Serial.println(FTS);
   
-  Serial.println(F("\nOUTPUTS:"));
+  Serial.println(F("OUTPUTS:"));
   Serial.print(F("BLOW (Combustion Blower Power): "));
   Serial.println(BLOW ? "ON" : "OFF");
   Serial.print(F("SHAFT (Main Shaft Power): "));
@@ -282,15 +303,14 @@ void displayDetailedStatus() {
   Serial.print(F("SCFI (Secondary Combustion Fault Indicator): "));
   Serial.println(SCFI ? "ON" : "OFF");
   
-  Serial.println(F("\nCOUNTERS:"));
+  Serial.println(F("COUNTERS:"));
   Serial.print(F("PCFC (Primary Combustion Flame Sensor Count): "));
   Serial.println(PCFC);
   Serial.print(F("SCFC (Secondary Combustion Flame Sensor Count): "));
   Serial.println(SCFC);
   
-  Serial.println(F("-------------------\n"));
+  Serial.println(F("-------------------"));
 }
-
 // Main state machine implementation
 void runStateMachine() {
   switch (current_state) {
